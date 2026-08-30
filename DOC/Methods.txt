@@ -39,6 +39,17 @@ List of defined IDs
 09 - SPARC
 0A - ARM64
 0B - RISCV
+0C - Transpose (byte transposition, records of R bytes)
+       Groups byte i of each R-byte record together, so that homogeneous
+       columns reach the next coder. Intended for fixed-size records:
+       sensor logs, struct arrays, PCM audio, numeric tables.
+       Property: 1 byte = R-1  (R in 1..256; R=1 means identity).
+       -m0=Transpose      : R is detected automatically from the data.
+       -m0=Transpose:15   : force R=15.
+       Auto-detection compares the mean absolute difference between bytes
+       R apart against that of adjacent bytes, and stays at R=1 (identity)
+       unless a column is clearly more homogeneous. It therefore never
+       degrades data that has no record structure.
 
 21 - LZMA2
           
