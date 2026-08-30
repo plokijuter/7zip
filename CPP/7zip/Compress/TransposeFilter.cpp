@@ -19,8 +19,9 @@ struct CTranspose
   // _R == 0 : mode AUTOMATIQUE, la periode sera devinee sur les premieres
   // donnees vues puis figee pour tout le flux.
   unsigned _R;
+  unsigned _exp;          // exposant de la taille de bloc, inscrit dans l'archive
   CByteBuffer _tmp;
-  CTranspose(): _R(0) {}
+  CTranspose(): _R(0), _exp(TRANSPOSE_EXP_DEF) {}
   Byte *Tmp(size_t need)
   {
     if (_tmp.Size() < need)
@@ -34,15 +35,27 @@ struct CTranspose
 class CEncoder Z7_final:
   public ICompressFilter,
   public ICompressSetCoderProperties,
+  public ICompressSetCoderPropertiesOpt,
   public ICompressWriteCoderProperties,
   public CMyUnknownImp,
   CTranspose
 {
-  Z7_IFACES_IMP_UNK_3(
+  Z7_IFACES_IMP_UNK_4(
       ICompressFilter,
       ICompressSetCoderProperties,
+      ICompressSetCoderPropertiesOpt,
       ICompressWriteCoderProperties)
 };
+
+// 7-Zip annonce ici la taille du flux a venir : c'est ce qui permet de choisir
+// une taille de bloc adaptee plutot qu'une constante unique.
+Z7_COM7F_IMF(CEncoder::SetCoderPropertiesOpt(const PROPID *propIDs, const PROPVARIANT *props, UInt32 numProps))
+{
+  for (UInt32 i = 0; i < numProps; i++)
+    if (propIDs[i] == NCoderPropID::kExpectedDataSize && props[i].vt == VT_UI8)
+      _exp = Transpose_PickExp(props[i].uhVal.QuadPart);
+  return S_OK;
+}
 
 Z7_COM7F_IMF(CEncoder::Init()) { return S_OK; }
 
@@ -54,8 +67,10 @@ Z7_COM7F_IMF2(UInt32, CEncoder::Filter(Byte *data, UInt32 size))
   if (_R == 0)
   {
     // On ne fige la decision qu'avec assez de donnees sous les yeux ; sinon on
-    // rend la main pour etre rappele avec un tampon plus grand.
-    if (size < TRANSPOSE_SAMPLE)
+    // rend la main pour etre rappele avec un tampon plus grand. Le seuil est
+    // la taille de bloc choisie, pas l'echantillon d'analyse : un petit
+    // fichier doit pouvoir beneficier du filtre lui aussi.
+    if (size < ((SizeT)1 << _exp))
       return 0;
     _R = Transpose_DetectR(data, size);
   }
@@ -66,9 +81,9 @@ Z7_COM7F_IMF2(UInt32, CEncoder::Filter(Byte *data, UInt32 size))
     return size;
 
   // en dessous d'un bloc complet, on ne convertit rien
-  if (_R == 0 || size < TRANSPOSE_BLOCK)
+  if (_R == 0 || size < ((SizeT)1 << _exp))
     return 0;
-  const SizeT used = Transpose_Encode(_R, data, size, Tmp(TRANSPOSE_BLOCK));
+  const SizeT used = Transpose_Encode(_R, _exp, data, size, Tmp(TRANSPOSE_BLOCK));
   return (UInt32)used;
 }
 
@@ -104,8 +119,10 @@ Z7_COM7F_IMF(CEncoder::WriteCoderProperties(ISequentialOutStream *outStream))
   // _R == 0 signifie que Filter() n'a jamais rien vu (flux vide) : on inscrit
   // l'identite, jamais une valeur non initialisee.
   const unsigned r = (_R == 0) ? 1 : _R;
-  const Byte prop = (Byte)(r - 1);
-  return outStream->Write(&prop, 1, NULL);
+  Byte prop[2];
+  prop[0] = (Byte)(r - 1);
+  prop[1] = (Byte)_exp;
+  return outStream->Write(prop, 2, NULL);
 }
 
 #endif
@@ -127,18 +144,23 @@ Z7_COM7F_IMF2(UInt32, CDecoder::Filter(Byte *data, UInt32 size))
 {
   if (_R == 1)
     return size;
-  if (size < TRANSPOSE_BLOCK)
+  if (size < ((SizeT)1 << _exp))
     return 0;
-  const SizeT used = Transpose_Decode(_R, data, size, Tmp(TRANSPOSE_BLOCK));
+  const SizeT used = Transpose_Decode(_R, _exp, data, size, Tmp(TRANSPOSE_BLOCK));
   return (UInt32)used;
 }
 
 Z7_COM7F_IMF(CDecoder::SetDecoderProperties2(const Byte *props, UInt32 size))
 {
-  if (size != 1)
+  // 1 octet : format initial, bloc de 64 Ko implicite.
+  // 2 octets : R puis exposant de la taille de bloc.
+  if (size != 1 && size != 2)
     return E_INVALIDARG;
   _R = (unsigned)props[0] + 1;
-  if (_R < TRANSPOSE_MIN_R)
+  if (_R < TRANSPOSE_MIN_R || _R > TRANSPOSE_MAX_R)
+    return E_INVALIDARG;
+  _exp = (size == 2) ? (unsigned)props[1] : TRANSPOSE_EXP_DEF;
+  if (_exp < TRANSPOSE_EXP_MIN || _exp > TRANSPOSE_EXP_MAX)
     return E_INVALIDARG;
   return S_OK;
 }
