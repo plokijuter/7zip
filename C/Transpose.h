@@ -16,16 +16,32 @@ EXTERN_C_BEGIN
 #define TRANSPOSE_MAX_R 256
 
 /* Taille de bloc FIXE, independante du tampon de l'appelant.
-   Indispensable : 7-Zip n'utilise pas les memes tailles de tampon
-   a la compression et a la decompression. Sans bloc fixe, la
-   transposition n'est pas reversible. */
-#define TRANSPOSE_BLOCK 65536
+   Indispensable : 7-Zip n'utilise pas les memes tailles de tampon a la
+   compression et a la decompression. Sans bloc fixe, la transposition n'est
+   pas reversible.
+
+   La taille est choisie a l'encodage selon la taille du flux, puis INSCRITE
+   dans l'archive : les deux cotes utilisent donc la meme, quels que soient
+   leurs tampons.
+
+   Pourquoi la faire varier : le dernier bloc incomplet du flux n'est jamais
+   transpose (le filtre ne sait pas qu'il est le dernier), et ces octets bruts
+   coutent cher. Sur un petit fichier un bloc de 64 Ko laisse jusqu'a 12 % des
+   donnees non traitees ; un bloc court limite la perte. Sur un gros fichier
+   la queue est negligeable et un bloc long donne de meilleures colonnes. */
+#define TRANSPOSE_EXP_MIN 12          /*  4 Ko */
+#define TRANSPOSE_EXP_MAX 16          /* 64 Ko */
+#define TRANSPOSE_EXP_DEF 16          /* defaut si la taille est inconnue */
+#define TRANSPOSE_BLOCK (1u << TRANSPOSE_EXP_MAX)   /* tampon temporaire max */
+
+/* Choisit l'exposant du bloc pour un flux de taille donnee. */
+unsigned Transpose_PickExp(UInt64 size);
 
 /* Transpose (size / R) enregistrements complets, en place, via un tampon temporaire.
    Les (size % R) octets de fin sont laisses tels quels.
    Renvoie le nombre d'octets effectivement convertis. */
-SizeT Transpose_Encode(unsigned R, Byte *data, SizeT size, Byte *tmp);
-SizeT Transpose_Decode(unsigned R, Byte *data, SizeT size, Byte *tmp);
+SizeT Transpose_Encode(unsigned R, unsigned exp, Byte *data, SizeT size, Byte *tmp);
+SizeT Transpose_Decode(unsigned R, unsigned exp, Byte *data, SizeT size, Byte *tmp);
 
 /* Taille de l'echantillon analyse pour deviner la periode. */
 #define TRANSPOSE_SAMPLE 65536

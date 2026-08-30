@@ -22,9 +22,19 @@ static void Enc1(unsigned R, Byte *data, SizeT blk, Byte *tmp)
   memcpy(data, tmp, blk);
 }
 
-SizeT Transpose_Encode(unsigned R, Byte *data, SizeT size, Byte *tmp)
+unsigned Transpose_PickExp(UInt64 size)
 {
-  const SizeT blk = (TRANSPOSE_BLOCK / R) * R;   /* multiple de R, fixe */
+  /* On veut que la queue non traitee (au pire un bloc entier) reste petite
+     devant le fichier : on vise un bloc d'au plus 1/32 du flux. */
+  unsigned e = TRANSPOSE_EXP_MIN;
+  while (e < TRANSPOSE_EXP_MAX && ((UInt64)1 << (e + 1)) * 32 <= size)
+    e++;
+  return e;
+}
+
+SizeT Transpose_Encode(unsigned R, unsigned exp, Byte *data, SizeT size, Byte *tmp)
+{
+  const SizeT blk = (((SizeT)1 << exp) / R) * R;   /* multiple de R, fixe */
   SizeT done = 0;
   if (R < TRANSPOSE_MIN_R || blk == 0)
     return 0;
@@ -51,9 +61,9 @@ static void Dec1(unsigned R, Byte *data, SizeT blk, Byte *tmp)
   memcpy(data, tmp, blk);
 }
 
-SizeT Transpose_Decode(unsigned R, Byte *data, SizeT size, Byte *tmp)
+SizeT Transpose_Decode(unsigned R, unsigned exp, Byte *data, SizeT size, Byte *tmp)
 {
-  const SizeT blk = (TRANSPOSE_BLOCK / R) * R;
+  const SizeT blk = (((SizeT)1 << exp) / R) * R;
   SizeT done = 0;
   if (R < TRANSPOSE_MIN_R || blk == 0)
     return 0;
