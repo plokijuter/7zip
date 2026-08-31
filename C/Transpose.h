@@ -65,6 +65,27 @@ unsigned Transpose_DetectR(const Byte *data, SizeT size);
 #define TRANSPOSE_PROBE_PPMD 1
 unsigned Transpose_MeasureR(const Byte *data, SizeT size, unsigned exp, unsigned probe);
 
+/* Choix de R sur le fichier ENTIER, pour une passe prealable.
+   On ne cherche pas a deviner juste : on compresse pour de vrai a R=1 et aux
+   rares candidats retenus, et on garde le plus petit. R=1 etant toujours en
+   lice, degrader devient impossible par construction — pas seulement rare.
+   Un filtre en flux ne peut pas faire cela : il ne voit jamais plus que le
+   tampon de FilterCoder, et le verdict s'inverse avec la taille de
+   l'echantillon (mesure : R=12 gagne sur 2 Mo, perd sur 3,5 Mo). */
+
+/* Au-dela de ce rapport de compression sans filtre, transposer n'apporte
+   jamais rien : mesure sur 55 fichiers, aucun gain rate a partir de 10x. */
+#define TRANSPOSE_RATIO_GUARD 10
+unsigned Transpose_ChooseR_Full(const Byte *data, SizeT size, unsigned exp, unsigned probe, int partial);
+
+/* Au-dela de cette taille on ne lit pas tout le fichier : la decision porte
+   alors sur un prefixe, et la garantie de non-degradation ne tient plus —
+   un prefixe peut mentir (mesure : R=12 gagne sur 2 Mo d'un fichier de 3,5 Mo
+   et perd sur le fichier entier). Sur un prefixe on exige donc une marge
+   franche avant d'accepter la transposition. */
+#define TRANSPOSE_FULL_LIMIT (64u << 20)
+#define TRANSPOSE_PREFIX_MARGIN 0.80
+
 EXTERN_C_END
 
 #endif

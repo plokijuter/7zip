@@ -2,4 +2,5 @@ C/Util/7zipInstall/_w/
 CPP/7zip/Bundles/Alone2/_o/
 CPP/7zip/Bundles/Alone2/_w/
 CPP/7zip/Bundles/Format7zF/_w/
+CPP/7zip/UI/Console/_w/
 mingw-shim/*.h

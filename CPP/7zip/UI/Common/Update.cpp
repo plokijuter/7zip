@@ -2,6 +2,11 @@
 
 #include "StdAfx.h"
 
+#include "../../../../C/Alloc.h"
+#include "../../../../C/Transpose.h"
+
+#include "../../../Common/IntToString.h"
+
 // #include  <stdio.h>
 
 #include "Update.h"
@@ -344,6 +349,88 @@ int FindAltStreamColon_in_Path(const wchar_t *path);
 
 
 
+
+/* --- Passe prealable pour le filtre Transpose -------------------------------
+   Le filtre ne peut pas choisir R tout seul : en flux il ne voit jamais plus
+   que le tampon de FilterCoder, et le verdict s'inverse avec la taille de
+   l'echantillon. Ici on a le fichier, on le lit et on tranche par des
+   compressions reelles ou R=1 est toujours en lice.
+   Declencheur : -m0=Transpose:a=3 (ou toute position). */
+
+static bool Transpose_IsAutoValue(const UString &v)
+{
+  UString s = v;
+  s.MakeLower_Ascii();
+  return s.IsPrefixedBy_Ascii_NoCase("transpose") && s.Find(L"a=3") >= 0;
+}
+
+static void Transpose_ResolveAuto(
+    CObjectVector<CProperty> &props,
+    const CDirItems &dirItems)
+{
+  unsigned iProp;
+  int found = -1;
+  for (iProp = 0; iProp < props.Size(); iProp++)
+    if (Transpose_IsAutoValue(props[iProp].Value))
+      { found = (int)iProp; break; }
+  if (found < 0)
+    return;
+
+  // on decide d'apres le plus gros fichier a compresser
+  unsigned bestIdx = 0;
+  UInt64 bestSize = 0;
+  unsigned i;
+  for (i = 0; i < dirItems.Items.Size(); i++)
+  {
+    const CDirItem &di = dirItems.Items[i];
+    if (di.IsDir())
+      continue;
+    if (di.Size > bestSize) { bestSize = di.Size; bestIdx = i; }
+  }
+
+  /* Sonde PPMd quelle que soit la chaine. On pourrait croire qu'il faut sonder
+     avec le codeur qui suit ; mesure faite, c'est faux ici : la sonde LZMA rate
+     des gains enormes que la sonde PPMd trouve, y compris pour une chaine LZMA2
+     (c_int32 : optimum 1512, sonde LZMA 16729, soit 11x rate). PPMd, modele de
+     contexte, classe mieux l'homogeneite des colonnes que ne le fait un
+     chercheur de repetitions. */
+  const unsigned probe = TRANSPOSE_PROBE_PPMD;
+
+  unsigned R = 1;
+  if (bestSize >= 4 * TRANSPOSE_MAX_R)
+  {
+    const size_t lim = (size_t)TRANSPOSE_FULL_LIMIT;
+    const int partial = (bestSize > lim) ? 1 : 0;
+    const size_t n = partial ? lim : (size_t)bestSize;
+    Byte *buf = (Byte *)MyAlloc(n);
+    if (buf)
+    {
+      NIO::CInFile file;
+      if (file.Open(dirItems.GetPhyPath(bestIdx)))
+      {
+        size_t got = 0;
+        if (file.ReadFull(buf, n, got) && got >= 4 * TRANSPOSE_MAX_R)
+        {
+          const unsigned exp = Transpose_PickExp(bestSize);
+          R = Transpose_ChooseR_Full(buf, got, exp, probe, partial);
+        }
+      }
+      MyFree(buf);
+    }
+  }
+
+  if (R <= 1)
+    props.Delete((unsigned)found);   // rien a gagner : on retire le filtre
+  else
+  {
+    char tmp[16];
+    ConvertUInt32ToString((UInt32)R, tmp);
+    UString v ("Transpose:");
+    v += tmp;
+    props[(unsigned)found].Value = v;
+  }
+}
+
 static HRESULT Compress(
     const CUpdateOptions &options,
     bool isUpdatingItself,
@@ -394,7 +481,9 @@ static HRESULT Compress(
     throw kUpdateIsNotSupoorted;
 
   // we need to set properties to get fileTimeType.
-  RINOK(SetProperties(outArchive, options.MethodMode.Properties))
+  CObjectVector<CProperty> methodProps = options.MethodMode.Properties;
+  Transpose_ResolveAuto(methodProps, dirItems);
+  RINOK(SetProperties(outArchive, methodProps))
 
   NFileTimeType::EEnum fileTimeType;
   {

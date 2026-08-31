@@ -159,8 +159,11 @@ static SizeT Transpose_LzmaSize(const Byte *src, SizeT len)
   if (!dest)
     return (SizeT)-1;
   LzmaEncProps_Init(&props);
-  props.level = 5;                 /* rapide : on compare, on ne livre pas */
-  props.dictSize = 1 << 20;
+  /* La sonde doit RESSEMBLER au codeur reel, sinon elle classe a l'envers :
+     avec un dictionnaire de 1 Mo elle jugeait R=1 meilleur que R=15 sur un
+     fichier ou LZMA2 en d=64m prefere nettement R=15 (28974 contre 23456). */
+  props.level = 9;
+  props.dictSize = 1 << 26;        /* 64 Mo, comme -mx=9 */
   props.numThreads = 1;
   res = LzmaEncode(dest, &destLen, src, len, &props, propsEnc, &propsSize, 0,
                    NULL, &g_Alloc, &g_BigAlloc);
@@ -249,6 +252,128 @@ unsigned Transpose_MeasureR(const Byte *data, SizeT size, unsigned exp, unsigned
     got = Transpose_ProbeSize(buf, n, probe);
     if (got != (SizeT)-1 && got < bestSize) { bestSize = got; best = cands[i]; }
   }
+
+  ISzAlloc_Free(&g_Alloc, buf);
+  ISzAlloc_Free(&g_Alloc, tmp);
+  return best;
+}
+
+/* --- Choix sur le fichier entier (passe prealable) --------------------------
+   Trois etapes, de la moins chere a la plus chere :
+     1. une compression de reference a R=1, dont on a besoin de toute facon ;
+        si le fichier compresse deja tres bien, on s'arrete la ;
+     2. un classement gratuit par ecart absolu moyen, qui donne un candidat ;
+     3. un classement par un codeur RAPIDE (LZMA niveau 1), qui en donne un
+        second — les deux sondes voient des choses differentes : l'ecart moyen
+        rate les resonances que seul un chercheur de repetitions voit, et le
+        codeur rapide rate les redondances purement statistiques.
+   Puis on compresse pour de vrai ces deux candidats au plus, et on garde le
+   meilleur des trois resultats. */
+
+static SizeT Transpose_FastSize(const Byte *src, SizeT len)
+{
+  CLzmaEncProps props;
+  Byte propsEnc[LZMA_PROPS_SIZE];
+  SizeT propsSize = LZMA_PROPS_SIZE;
+  SizeT destLen = len + len / 3 + 128;
+  Byte *dest = (Byte *)ISzAlloc_Alloc(&g_Alloc, destLen);
+  SRes res;
+  if (!dest)
+    return (SizeT)-1;
+  LzmaEncProps_Init(&props);
+  props.level = 1;                 /* on classe, on ne livre pas */
+  props.dictSize = 1 << 18;
+  props.numThreads = 1;
+  res = LzmaEncode(dest, &destLen, src, len, &props, propsEnc, &propsSize, 0,
+                   NULL, &g_Alloc, &g_BigAlloc);
+  ISzAlloc_Free(&g_Alloc, dest);
+  return (res == SZ_OK) ? destLen : (SizeT)-1;
+}
+
+unsigned Transpose_ChooseR_Full(const Byte *data, SizeT size, unsigned exp, unsigned probe, int partial)
+{
+  static const unsigned CS[] = { 2,3,4,6,8,12,16,24,32,44,48,64,88,96,128,176,192,224,256 };
+  const unsigned nCS = (unsigned)(sizeof(CS) / sizeof(CS[0]));
+  unsigned i, best = 1, cand[2];
+  unsigned nCand = 0;
+  SizeT baseline, bestSize;
+  double mad1, madBest = 0, fast1, fastBest = 0;
+  unsigned madR = 0, fastR = 0;
+  Byte *buf, *tmp;
+
+  if (size < (SizeT)4 * TRANSPOSE_MAX_R)
+    return 1;
+
+  /* 1. reference a R=1 */
+  baseline = Transpose_ProbeSize(data, size, probe);
+  if (baseline == (SizeT)-1 || baseline == 0)
+    return 1;
+  if (size / baseline >= TRANSPOSE_RATIO_GUARD)
+    return 1;   /* deja tres compressible : transposer ne peut que nuire */
+
+  /* 2. classement par ecart absolu moyen. On balaye TOUTES les valeurs de 2 a
+     256, pas une grille : c'est gratuit (des soustractions), et une grille
+     rate les periodes intermediaires — mesure : l'optimum d'un fichier de test
+     est R=15, absent de toute grille raisonnable, et le rater coute 27 %. */
+  mad1 = (double)Transpose_Mad(data, size, 1) / (double)(size - 1);
+  if (mad1 > 0)
+  {
+    unsigned L;
+    for (L = 2; L <= TRANSPOSE_MAX_R; L++)
+    {
+      double v;
+      if ((SizeT)L >= size) break;
+      v = (double)Transpose_Mad(data, size, L) / (double)(size - L);
+      if (madR == 0 || v < madBest) { madBest = v; madR = L; }
+    }
+  }
+  /* Seuil volontairement LARGE : le verdict final vient de compressions
+     reelles ou R=1 est toujours en lice, donc un candidat de trop ne coute que
+     du temps, jamais de la justesse. Un seuil serre (0,30) ratait 85 % de gain
+     sur des releves de capteurs float, dont l'ecart moyen tombe a 0,52. */
+  if (madR && madBest < 0.90 * mad1)
+    cand[nCand++] = madR;
+
+  buf = (Byte *)ISzAlloc_Alloc(&g_Alloc, size);
+  tmp = (Byte *)ISzAlloc_Alloc(&g_Alloc, (size_t)1 << exp);
+  if (!buf || !tmp)
+  {
+    if (buf) ISzAlloc_Free(&g_Alloc, buf);
+    if (tmp) ISzAlloc_Free(&g_Alloc, tmp);
+    return 1;
+  }
+
+  /* 3. classement par codeur rapide */
+  fast1 = (double)Transpose_FastSize(data, size);
+  if (fast1 > 0)
+    for (i = 0; i < nCS; i++)
+    {
+      double v;
+      if ((SizeT)CS[i] >= size) break;
+      memcpy(buf, data, size);
+      Transpose_Encode(CS[i], exp, buf, size, tmp);
+      v = (double)Transpose_FastSize(buf, size);
+      if (v > 0 && (fastR == 0 || v < fastBest)) { fastBest = v; fastR = CS[i]; }
+    }
+  if (fastR && fastBest < 0.90 * fast1 && fastR != madR && nCand < 2)
+    cand[nCand++] = fastR;
+
+  /* 4. on tranche par des compressions REELLES, R=1 toujours en lice.
+     C'est ce qui rend la degradation impossible par construction : le resultat
+     retenu est un minimum qui inclut toujours la taille sans filtre. */
+  bestSize = baseline;
+  for (i = 0; i < nCand; i++)
+  {
+    SizeT got;
+    memcpy(buf, data, size);
+    Transpose_Encode(cand[i], exp, buf, size, tmp);
+    got = Transpose_ProbeSize(buf, size, probe);
+    if (got != (SizeT)-1 && got < bestSize) { bestSize = got; best = cand[i]; }
+  }
+  /* Si la decision porte sur un prefixe et non sur tout le fichier, la
+     garantie ci-dessus ne tient plus : on exige alors une marge franche. */
+  if (partial && best != 1 && (double)bestSize > TRANSPOSE_PREFIX_MARGIN * (double)baseline)
+    best = 1;
 
   ISzAlloc_Free(&g_Alloc, buf);
   ISzAlloc_Free(&g_Alloc, tmp);
