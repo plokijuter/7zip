@@ -20,8 +20,9 @@ struct CTranspose
   // donnees vues puis figee pour tout le flux.
   unsigned _R;
   unsigned _exp;          // exposant de la taille de bloc, inscrit dans l'archive
+  unsigned _measure;      // 0 = heuristique (rapide), 1 = on mesure vraiment
   CByteBuffer _tmp;
-  CTranspose(): _R(0), _exp(TRANSPOSE_EXP_DEF) {}
+  CTranspose(): _R(0), _exp(TRANSPOSE_EXP_DEF), _measure(0) {}
   Byte *Tmp(size_t need)
   {
     if (_tmp.Size() < need)
@@ -72,7 +73,9 @@ Z7_COM7F_IMF2(UInt32, CEncoder::Filter(Byte *data, UInt32 size))
     // fichier doit pouvoir beneficier du filtre lui aussi.
     if (size < ((SizeT)1 << _exp))
       return 0;
-    _R = Transpose_DetectR(data, size);
+    _R = _measure ? Transpose_MeasureR(data, size, _exp,
+                        (_measure == 2) ? TRANSPOSE_PROBE_LZMA : TRANSPOSE_PROBE_PPMD)
+                  : Transpose_DetectR(data, size);
   }
 
   // Aucune periode franche : on ne touche a rien. Le filtre est alors neutre
@@ -104,6 +107,16 @@ Z7_COM7F_IMF(CEncoder::SetCoderProperties(const PROPID *propIDs, const PROPVARIA
         if (prop.ulVal < TRANSPOSE_MIN_R || prop.ulVal > TRANSPOSE_MAX_R)
           return E_INVALIDARG;
         R = prop.ulVal;
+        break;
+      case NCoderPropID::kAlgorithm:
+        // a=0 : heuristique rapide (peut se tromper lourdement)
+        // a=1 : on MESURE, sonde PPMd  — a utiliser si -m1=PPMd
+        // a=2 : on MESURE, sonde LZMA  — a utiliser si -m1=LZMA/LZMA2
+        // La sonde doit etre le codeur qui suit reellement : LZMA et PPMd ne
+        // preferent pas le meme R.
+        if (prop.ulVal > 2)
+          return E_INVALIDARG;
+        _measure = prop.ulVal;
         break;
       case NCoderPropID::kNumThreads: break;
       case NCoderPropID::kLevel: break;

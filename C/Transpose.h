@@ -51,6 +51,20 @@ SizeT Transpose_Decode(unsigned R, unsigned exp, Byte *data, SizeT size, Byte *t
    se comporte en identite plutot que de risquer d'empirer la compression. */
 unsigned Transpose_DetectR(const Byte *data, SizeT size);
 
+/* Mode CALCUL : au lieu de se fier a l'heuristique, on compresse reellement un
+   echantillon avec chaque R candidat (plus R=1) et on garde le vainqueur.
+   Plus lent, mais c'est une mesure et non une supposition. */
+#define TRANSPOSE_MEASURE_SAMPLE (4u << 20)   /* 4 Mo : il faut plusieurs blocs pour
+                                                 voir si la transposition casse
+                                                 la redondance a longue portee */
+#define TRANSPOSE_MEASURE_CANDS  8
+/* Codeur servant a la mesure. Il DOIT etre celui qui suivra reellement le
+   filtre : LZMA et PPMd ne preferent pas le meme R, et se tromper de codeur
+   de mesure conduit a des choix aberrants (mesure : jusqu'a x19 de perte). */
+#define TRANSPOSE_PROBE_LZMA 0
+#define TRANSPOSE_PROBE_PPMD 1
+unsigned Transpose_MeasureR(const Byte *data, SizeT size, unsigned exp, unsigned probe);
+
 EXTERN_C_END
 
 #endif
