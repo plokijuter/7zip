@@ -364,9 +364,42 @@ static bool Transpose_IsAutoValue(const UString &v)
   return s.IsPrefixedBy_Ascii_NoCase("transpose") && s.Find(L"a=3") >= 0;
 }
 
+/* Pont entre la barre de progression de 7-Zip et la passe de mesure. Sans lui
+   la fenetre affiche « Compression » a 0 % pendant toute la mesure, sans
+   bouger et sans pouvoir etre annulee. Les points de travail rendus par
+   Transpose.c sont abstraits : on les remet a l'echelle des octets examines,
+   seule unite que la fenetre sait afficher. */
+struct CTransposeProgress
+{
+  ITransposeProgress vt;   // doit rester le premier membre
+  IUpdateCallbackUI *callback;
+  UInt64 scale;
+  bool totalSet;
+};
+
+static int Transpose_ProgressCb(ITransposeProgress *p, UInt64 done, UInt64 total)
+{
+  CTransposeProgress *self = (CTransposeProgress *)(void *)p;
+  if (!self->callback || total == 0)
+    return 0;
+  if (!self->totalSet)
+  {
+    self->totalSet = true;
+    if (self->callback->SetTotal(self->scale) != S_OK)
+      return 1;
+  }
+  {
+    const UInt64 cur = (UInt64)((double)done / (double)total * (double)self->scale);
+    if (self->callback->SetCompleted(&cur) != S_OK)
+      return 1;
+  }
+  return self->callback->CheckBreak() == S_OK ? 0 : 1;
+}
+
 static void Transpose_ResolveAuto(
     CObjectVector<CProperty> &props,
-    const CDirItems &dirItems)
+    const CDirItems &dirItems,
+    IUpdateCallbackUI *callback)
 {
   unsigned iProp;
   int found = -1;
@@ -412,7 +445,12 @@ static void Transpose_ResolveAuto(
         if (file.ReadFull(buf, n, got) && got >= 4 * TRANSPOSE_MAX_R)
         {
           const unsigned exp = Transpose_PickExp(bestSize);
-          R = Transpose_ChooseR_Full(buf, got, exp, probe, partial);
+          CTransposeProgress prog;
+          prog.vt.Progress = Transpose_ProgressCb;
+          prog.callback = callback;
+          prog.scale = got;
+          prog.totalSet = false;
+          R = Transpose_ChooseR_Full(buf, got, exp, probe, partial, &prog.vt);
         }
       }
       MyFree(buf);
@@ -482,7 +520,7 @@ static HRESULT Compress(
 
   // we need to set properties to get fileTimeType.
   CObjectVector<CProperty> methodProps = options.MethodMode.Properties;
-  Transpose_ResolveAuto(methodProps, dirItems);
+  Transpose_ResolveAuto(methodProps, dirItems, callback);
   RINOK(SetProperties(outArchive, methodProps))
 
   NFileTimeType::EEnum fileTimeType;

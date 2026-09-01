@@ -76,7 +76,24 @@ unsigned Transpose_MeasureR(const Byte *data, SizeT size, unsigned exp, unsigned
 /* Au-dela de ce rapport de compression sans filtre, transposer n'apporte
    jamais rien : mesure sur 55 fichiers, aucun gain rate a partir de 10x. */
 #define TRANSPOSE_RATIO_GUARD 10
-unsigned Transpose_ChooseR_Full(const Byte *data, SizeT size, unsigned exp, unsigned probe, int partial);
+/* Signe de vie pendant la passe de mesure. Sans lui la fenetre de 7zG affiche
+   « Compression » a 0 % et parait figee, sans meme pouvoir etre annulee, le
+   temps que la mesure se fasse — mesure sur un dossier de 4,2 Go de video.
+   Progress renvoie 0 pour continuer, non nul pour abandonner (l'appelant rend
+   alors R=1, ce qui revient a ne pas filtrer). */
+typedef struct ITransposeProgress ITransposeProgress;
+struct ITransposeProgress
+{
+  int (*Progress)(ITransposeProgress *p, UInt64 done, UInt64 total);
+};
+
+/* Echantillon sur lequel se fait le TRIAGE bon marche, avant toute sonde
+   chere. 4 Mo : il faut plusieurs blocs pour que la mesure soit
+   representative, c'est la meme raison qui fixe TRANSPOSE_MEASURE_SAMPLE. */
+#define TRANSPOSE_TRIAGE_SAMPLE (4u << 20)
+
+unsigned Transpose_ChooseR_Full(const Byte *data, SizeT size, unsigned exp, unsigned probe,
+    int partial, ITransposeProgress *prog);
 
 /* Au-dela de cette taille on ne lit pas tout le fichier : la decision porte
    alors sur un prefixe, et la garantie de non-degradation ne tient plus —
