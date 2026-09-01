@@ -212,13 +212,26 @@ static void SetOutProperties(
     AddProp_UInt32(properties, "x", (UInt32)di.Level);
   if (setMethod)
   {
-    if (!di.Method.IsEmpty())
+    // "anyz2" n'est pas un codeur : c'est le filtre Transpose (methode 0C)
+    // suivi de LZMA2. On developpe ici le choix du menu en deux etages, pour
+    // que l'utilisateur n'ait rien a taper dans le champ "Parametres".
+    // a=3 = on mesure le pas d'entrelacement sur le fichier entier avant de
+    // compresser ; le filtre ne peut pas degrader (R=1 reste en lice).
+    const bool isAnyz2 = is7z && di.Method.IsEqualTo_Ascii_NoCase("anyz2");
+    AString numPrefix ("0");
+    if (isAnyz2)
+    {
+      AddProp_UString(properties, "0", UString("Transpose:a=3"));
+      AddProp_UString(properties, "1", UString("LZMA2"));
+      numPrefix = "1";
+    }
+    else if (!di.Method.IsEmpty())
       AddProp_UString(properties, is7z ? "0": "m", di.Method);
     if (di.Dict64 != (UInt64)(Int64)-1)
     {
       AString name;
       if (is7z)
-        name = "0";
+        name = numPrefix;
       name += (di.OrderMode ? "mem" : "d");
       AddProp_Size(properties, name, di.Dict64);
     }
@@ -236,7 +249,7 @@ static void SetOutProperties(
     {
       AString name;
       if (is7z)
-        name = "0";
+        name = numPrefix;
       name += (di.OrderMode ? "o" : "fb");
       AddProp_UInt32(properties, name, (UInt32)di.Order);
     }

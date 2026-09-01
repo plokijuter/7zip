@@ -126,6 +126,7 @@ enum EMethodID
   kCopy,
   kLZMA,
   kLZMA2,
+  kAnyz2,   // filtre Transpose (methode 0C) + LZMA2 : voir UpdateGUI.cpp
   kPPMd,
   kBZip2,
   kDeflate,
@@ -145,6 +146,7 @@ static LPCSTR const kMethodsNames[] =
     "Copy"
   , "LZMA"
   , "LZMA2"
+  , "anyz2"
   , "PPMd"
   , "BZip2"
   , "Deflate"
@@ -162,6 +164,7 @@ static LPCSTR const kMethodsNames[] =
 static const EMethodID g_7zMethods[] =
 {
   kLZMA2,
+  kAnyz2,
   kLZMA,
   kPPMd,
   kBZip2
@@ -1700,6 +1703,14 @@ void CCompressDialog::SetMethod2(int keepMethodId)
     }
     if ((defaultMethod.IsEqualTo_Ascii_NoCase(method) || m == 0) && !weUseSameMethod)
       m_Method.SetCurSel(itemIndex);
+    // anyz2 (filtre Transpose + LZMA2) est le choix propose par defaut pour 7z
+    // tant que l'utilisateur n'a pas enregistre une autre methode : il ne peut
+    // pas faire pire que LZMA2 seul, R=1 restant en lice dans la passe de
+    // mesure. anyz2 ne peut pas occuper la 1re place de la liste : celle-ci est
+    // l'entree "*" automatique, dont la donnee vaut -1 et qui n'emet aucune
+    // propriete de methode.
+    if (is7z && defaultMethod.IsEmpty() && methodID == kAnyz2 && !weUseSameMethod)
+      m_Method.SetCurSel(itemIndex);
   }
   
   if (!weUseSameMethod)
@@ -1936,6 +1947,7 @@ void CCompressDialog::SetDictionary2()
   {
     case kLZMA:
     case kLZMA2:
+    case kAnyz2:
     {
       {
         _auto_Dict = level <= 4 ?
@@ -2238,6 +2250,7 @@ void CCompressDialog::SetOrder2()
   {
     case kLZMA:
     case kLZMA2:
+    case kAnyz2:
     {
       _auto_Order = (level < 7 ? 32 : 64);
       int curSel = AddOrder_Auto();
@@ -2454,7 +2467,7 @@ void CCompressDialog::SetSolidBlockSize2()
     // we use same default block sizes as defined in 7z encoder
     UInt64 kMaxSize = (UInt64)1 << 32;
     const int methodId = GetMethodID();
-    if (methodId == kLZMA2)
+    if (methodId == kLZMA2 || methodId == kAnyz2)
     {
       blockSize = cs << 6;
       kMaxSize = (UInt64)1 << 34;
@@ -2615,7 +2628,8 @@ void CCompressDialog::SetNumThreads2()
   else switch (methodID)
   {
     case kLZMA: numAlgoThreadsMax = 2; break;
-    case kLZMA2: numAlgoThreadsMax = 256 * 2; break; // MTCODER_THREADS_MAX * 2
+    case kLZMA2:
+    case kAnyz2: numAlgoThreadsMax = 256 * 2; break; // MTCODER_THREADS_MAX * 2
     case kBZip2: numAlgoThreadsMax = 64; break;
     // case kZSTD: numAlgoThreadsMax = num_ZSTD_threads_MAX; break;
     case kCopy:
@@ -2647,7 +2661,7 @@ void CCompressDialog::SetNumThreads2()
           break;
       }
     }
-    else if (methodID == kLZMA2)
+    else if (methodID == kLZMA2 || methodID == kAnyz2)
     {
       const UInt64 dict64 = GetDict2();
       const UInt32 numThreads1 = (GetLevel2() >= 5 ? 2 : 1);
@@ -2941,6 +2955,7 @@ UInt64 CCompressDialog::GetMemoryUsage_Threads_Dict_DecompMem(UInt32 numThreads,
   {
     case kLZMA:
     case kLZMA2:
+    case kAnyz2:
     {
       const UInt32 dict = (dict64 >= kLzmaMaxDictSize ? kLzmaMaxDictSize : (UInt32)dict64);
       UInt32 hs = dict - 1;

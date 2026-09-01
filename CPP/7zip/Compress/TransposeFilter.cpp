@@ -109,14 +109,18 @@ Z7_COM7F_IMF(CEncoder::SetCoderProperties(const PROPID *propIDs, const PROPVARIA
         R = prop.ulVal;
         break;
       case NCoderPropID::kAlgorithm:
-        // a=0 : heuristique rapide (peut se tromper lourdement)
-        // a=1 : on MESURE, sonde PPMd  — a utiliser si -m1=PPMd
-        // a=2 : on MESURE, sonde LZMA  — a utiliser si -m1=LZMA/LZMA2
-        // La sonde doit etre le codeur qui suit reellement : LZMA et PPMd ne
-        // preferent pas le meme R.
-        if (prop.ulVal > 2)
+        // a=0 : heuristique rapide. Elle se trompe lourdement (mesure : 13 cas
+        //       sur 40, jusqu'a +2245 %). Ne pas l'utiliser par defaut.
+        // a=1 : on MESURE sur l'echantillon vu par le filtre, sonde PPMd.
+        // a=2 : idem, sonde LZMA.
+        // a=3 : on decide dans une passe prealable sur le fichier ENTIER.
+        //       Normalement Update.cpp resout a=3 en un R concret avant que le
+        //       filtre ne le voie. Si le filtre le recoit quand meme — cas d'un
+        //       7zFM/7zG d'origine, sans la passe — on retombe sur a=1 plutot
+        //       que d'echouer : moins bon, mais fonctionnel.
+        if (prop.ulVal > 3)
           return E_INVALIDARG;
-        _measure = prop.ulVal;
+        _measure = (prop.ulVal == 3) ? 1 : prop.ulVal;
         break;
       case NCoderPropID::kNumThreads: break;
       case NCoderPropID::kLevel: break;
