@@ -182,9 +182,29 @@ Z7_COM7F_IMF(CDecoder::SetDecoderProperties2(const Byte *props, UInt32 size))
   return S_OK;
 }
 
+/* Identifiant de methode.
+ *
+ * L'ID court 0x0C etait une erreur : Methods.txt reserve TOUS les
+ * identifiants courts aux developpeurs de 7-Zip et de xz. Igor Pavlov l'a
+ * signale sur la proposition amont, et il a raison -- un tiers qui s'en
+ * attribue un finit tot ou tard par entrer en collision avec une methode
+ * officielle, et les deux archives deviennent indistinguables.
+ *
+ * Convention pour un tiers, telle que Methods.txt la definit :
+ *
+ *     3F ZZ ZZ ZZ ZZ ZZ MM MM
+ *     3F               prefixe des identifiants aleatoires
+ *     ZZ ZZ ZZ ZZ ZZ   identifiant developpeur, VRAIS octets aleatoires
+ *     MM MM            numero de methode chez ce developpeur
+ *
+ * Notre identifiant developpeur a ete tire de /dev/urandom : E2B7E19B8A.
+ * Transpose est la methode 0001.
+ */
+#define Z7_ID_TRANSPOSE ((UInt64)0x3FE2B7E19B8AULL << 16 | 0x0001)
+
 REGISTER_FILTER_E(Transpose,
     CDecoder(),
     CEncoder(),
-    0xC, "Transpose")
+    Z7_ID_TRANSPOSE, "Transpose")
 
 }}

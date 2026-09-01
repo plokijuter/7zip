@@ -39,24 +39,6 @@ List of defined IDs
 09 - SPARC
 0A - ARM64
 0B - RISCV
-0C - Transpose (byte transposition, records of R bytes)
-       Groups byte i of each R-byte record together, so that homogeneous
-       columns reach the next coder. Intended for fixed-size records:
-       sensor logs, struct arrays, PCM audio, numeric tables.
-       Properties: 2 bytes = R-1, then log2 of the block size.
-       (R in 1..256, R=1 means identity; block exponent in 12..16.)
-       A 1-byte property is still accepted and implies a 64 KiB block.
-       The block size is picked from the stream size at encoding time and
-       recorded, so both sides use the same one whatever their buffers are:
-       the final partial block of a stream is never transposed, and on a
-       small file a 64 KiB block would leave a large raw tail behind.
-       -m0=Transpose      : R is detected automatically from the data.
-       -m0=Transpose:15   : force R=15.
-       Auto-detection compares the mean absolute difference between bytes
-       R apart against that of adjacent bytes, and stays at R=1 (identity)
-       unless a column is clearly more homogeneous. It therefore never
-       degrades data that has no record structure.
-
 21 - LZMA2
           
 02.. - Common
@@ -192,3 +174,26 @@ List of defined IDs
 
 ---
 End of document
+
+Third-party IDs
+---------------
+
+3F E2B7E19B8A xxxx - Developer ID E2B7E19B8A
+
+  3F E2B7E19B8A 0001 - Transpose (byte transposition, records of R bytes)
+       Groups byte i of each R-byte record together, so that homogeneous
+       columns reach the next coder. Intended for fixed-size records:
+       sensor logs, struct arrays, PCM audio, numeric tables.
+       Properties: 2 bytes = R-1, then log2 of the block size.
+       (R in 1..256, R=1 means identity; block exponent in 12..16.)
+       A 1-byte property is still accepted and implies a 64 KiB block.
+       The block size is picked from the stream size at encoding time and
+       recorded, so both sides use the same one whatever their buffers are:
+       the final partial block of a stream is never transposed, and on a
+       small file a 64 KiB block would leave a large raw tail behind.
+       -m0=Transpose      : R is detected automatically from the data.
+       -m0=Transpose:15   : force R=15.
+       Auto-detection compares the mean absolute difference between bytes
+       R apart against that of adjacent bytes, and stays at R=1 (identity)
+       unless a column is clearly more homogeneous. It therefore never
+       degrades data that has no record structure.
