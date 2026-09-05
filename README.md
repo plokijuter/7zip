@@ -1,6 +1,6 @@
 # 7-Zip with a Transpose filter
 
-A fork of [ip7z/7zip](https://github.com/ip7z/7zip) 26.02 adding **method `0C`, Transpose**:
+A fork of [ip7z/7zip](https://github.com/ip7z/7zip) 26.02 adding **method `04 F7 13 01`, Transpose**:
 a byte-transposition filter for data made of fixed-size records.
 
 It groups byte *i* of each R-byte record together, so that homogeneous columns
@@ -13,6 +13,11 @@ series.
 - **Diff against upstream:** [`main...transpose-filter`](https://github.com/plokijuter/7zip/compare/main...transpose-filter)
 - **Upstream pull request:** [ip7z/7zip#245](https://github.com/ip7z/7zip/pull/245)
 - **Binaries and patch:** see [Releases](https://github.com/plokijuter/7zip/releases)
+
+> **Method ID.** Early revisions of this fork registered the filter at the short ID
+> `0C`. Short IDs are reserved for the 7-Zip and xz developers; that was a mistake on
+> my part. Igor Pavlov allocated `04 F7 13 01` for this filter, and that is the ID used
+> now. Archives written by those early builds are not readable by the current one.
 
 ## Results
 
@@ -109,7 +114,7 @@ Everything is additive except the build hooks and `DOC/Methods.txt`:
 | file | |
 |---|---|
 | `C/Transpose.c`, `C/Transpose.h` | the transform and the R detector |
-| `CPP/7zip/Compress/TransposeFilter.cpp` | the 7-Zip filter, registered at `0C` |
+| `CPP/7zip/Compress/TransposeFilter.cpp` | the 7-Zip filter, registered at `04 F7 13 01` |
 | `CPP/7zip/7zip_gcc.mak`, `CPP/7zip/Bundles/Format7zF/Arc_gcc.mak` | build hooks |
 | `DOC/Methods.txt` | method documentation |
 
