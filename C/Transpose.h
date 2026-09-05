@@ -37,16 +37,20 @@ EXTERN_C_BEGIN
 /* Choisit l'exposant du bloc pour un flux de taille donnee. */
 unsigned Transpose_PickExp(UInt64 size);
 
-/* Transpose (size / R) enregistrements complets, en place, via un tampon temporaire.
-   Les (size % R) octets de fin sont laisses tels quels.
+/* Transpose des blocs complets, en place, via un tampon temporaire.
+   Le dernier bloc incomplet est laisse tel quel.
    Renvoie le nombre d'octets effectivement convertis. */
 SizeT Transpose_Encode(unsigned R, unsigned exp, Byte *data, SizeT size, Byte *tmp);
-SizeT Transpose_Decode(unsigned R, unsigned exp, Byte *data, SizeT size, Byte *tmp);
+/* Validated by the caller: R in 1..256, stepExp <= 16,
+   (R << stepExp) <= TRANSPOSE_BLOCK. Final incomplete blocks stay raw. */
+unsigned Transpose_StepExp(unsigned R, unsigned exp);
+SizeT Transpose_Convert(unsigned R, unsigned stepExp, Byte *data,
+    SizeT size, Byte *tmp, int encode);
 
 /* Taille de l'echantillon analyse pour deviner la periode. */
 #define TRANSPOSE_SAMPLE 65536
 
-/* Devine la taille d'enregistrement R par autocorrelation.
+/* Propose R en comparant les ecarts absolus moyens par colonne.
    Renvoie 1 si aucune periode franche ne ressort : dans ce cas le filtre
    se comporte en identite plutot que de risquer d'empirer la compression. */
 unsigned Transpose_DetectR(const Byte *data, SizeT size);

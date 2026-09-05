@@ -19,10 +19,12 @@ struct CTranspose
   // _R == 0 : mode AUTOMATIQUE, la periode sera devinee sur les premieres
   // donnees vues puis figee pour tout le flux.
   unsigned _R;
-  unsigned _exp;          // exposant de la taille de bloc, inscrit dans l'archive
+  unsigned _stepExp;
+  unsigned _requestedR;
+  unsigned _exp;          // budget de bloc cote encodeur, pas une propriete du flux
   unsigned _measure;      // 0 = heuristique (rapide), 1 = on mesure vraiment
   CByteBuffer _tmp;
-  CTranspose(): _R(0), _exp(TRANSPOSE_EXP_DEF), _measure(0) {}
+  CTranspose(): _R(0), _stepExp(0), _requestedR(0), _exp(TRANSPOSE_EXP_DEF), _measure(0) {}
   Byte *Tmp(size_t need)
   {
     if (_tmp.Size() < need)
@@ -58,7 +60,12 @@ Z7_COM7F_IMF(CEncoder::SetCoderPropertiesOpt(const PROPID *propIDs, const PROPVA
   return S_OK;
 }
 
-Z7_COM7F_IMF(CEncoder::Init()) { return S_OK; }
+Z7_COM7F_IMF(CEncoder::Init())
+{
+  _R = _requestedR;
+  if (_R) _stepExp = Transpose_StepExp(_R, _exp);
+  return S_OK;
+}
 
 Z7_COM7F_IMF2(UInt32, CEncoder::Filter(Byte *data, UInt32 size))
 {
@@ -76,6 +83,7 @@ Z7_COM7F_IMF2(UInt32, CEncoder::Filter(Byte *data, UInt32 size))
     _R = _measure ? Transpose_MeasureR(data, size, _exp,
                         (_measure == 2) ? TRANSPOSE_PROBE_LZMA : TRANSPOSE_PROBE_PPMD)
                   : Transpose_DetectR(data, size);
+    _stepExp = Transpose_StepExp(_R, _exp);
   }
 
   // Aucune periode franche : on ne touche a rien. Le filtre est alors neutre
@@ -84,15 +92,15 @@ Z7_COM7F_IMF2(UInt32, CEncoder::Filter(Byte *data, UInt32 size))
     return size;
 
   // en dessous d'un bloc complet, on ne convertit rien
-  if (_R == 0 || size < ((SizeT)1 << _exp))
+  if (_R == 0 || size < ((SizeT)_R << _stepExp))
     return 0;
-  const SizeT used = Transpose_Encode(_R, _exp, data, size, Tmp(TRANSPOSE_BLOCK));
+  const SizeT used = Transpose_Convert(_R, _stepExp, data, size, Tmp(TRANSPOSE_BLOCK), 1);
   return (UInt32)used;
 }
 
 Z7_COM7F_IMF(CEncoder::SetCoderProperties(const PROPID *propIDs, const PROPVARIANT *props, UInt32 numProps))
 {
-  unsigned R = _R;
+  unsigned R = 0;
   for (UInt32 i = 0; i < numProps; i++)
   {
     const PROPVARIANT &prop = props[i];
@@ -127,7 +135,7 @@ Z7_COM7F_IMF(CEncoder::SetCoderProperties(const PROPID *propIDs, const PROPVARIA
       default: return E_INVALIDARG;
     }
   }
-  _R = R;
+  _requestedR = _R = R;
   return S_OK;
 }
 
@@ -138,7 +146,7 @@ Z7_COM7F_IMF(CEncoder::WriteCoderProperties(ISequentialOutStream *outStream))
   const unsigned r = (_R == 0) ? 1 : _R;
   Byte prop[2];
   prop[0] = (Byte)(r - 1);
-  prop[1] = (Byte)_exp;
+  prop[1] = (Byte)(_R ? _stepExp : 0);
   return outStream->Write(prop, 2, NULL);
 }
 
@@ -161,46 +169,29 @@ Z7_COM7F_IMF2(UInt32, CDecoder::Filter(Byte *data, UInt32 size))
 {
   if (_R == 1)
     return size;
-  if (size < ((SizeT)1 << _exp))
+  if (_R == 0) return 0;
+  if (size < ((SizeT)_R << _stepExp))
     return 0;
-  const SizeT used = Transpose_Decode(_R, _exp, data, size, Tmp(TRANSPOSE_BLOCK));
+  const SizeT used = Transpose_Convert(_R, _stepExp, data, size, Tmp(TRANSPOSE_BLOCK), 0);
   return (UInt32)used;
 }
 
 Z7_COM7F_IMF(CDecoder::SetDecoderProperties2(const Byte *props, UInt32 size))
 {
-  // 1 octet : format initial, bloc de 64 Ko implicite.
-  // 2 octets : R puis exposant de la taille de bloc.
-  if (size != 1 && size != 2)
+  // New allocated method ID: exactly two bytes, no legacy property layouts.
+  _R = 0;
+  if (size != 2 || props[1] > TRANSPOSE_EXP_MAX)
     return E_INVALIDARG;
-  _R = (unsigned)props[0] + 1;
-  if (_R < TRANSPOSE_MIN_R || _R > TRANSPOSE_MAX_R)
+  const unsigned R = (unsigned)props[0] + 1;
+  if (((SizeT)R << props[1]) > TRANSPOSE_BLOCK)
     return E_INVALIDARG;
-  _exp = (size == 2) ? (unsigned)props[1] : TRANSPOSE_EXP_DEF;
-  if (_exp < TRANSPOSE_EXP_MIN || _exp > TRANSPOSE_EXP_MAX)
-    return E_INVALIDARG;
+  _R = R;
+  _stepExp = props[1];
   return S_OK;
 }
 
-/* Identifiant de methode.
- *
- * L'ID court 0x0C etait une erreur : Methods.txt reserve TOUS les
- * identifiants courts aux developpeurs de 7-Zip et de xz. Igor Pavlov l'a
- * signale sur la proposition amont, et il a raison -- un tiers qui s'en
- * attribue un finit tot ou tard par entrer en collision avec une methode
- * officielle, et les deux archives deviennent indistinguables.
- *
- * Convention pour un tiers, telle que Methods.txt la definit :
- *
- *     3F ZZ ZZ ZZ ZZ ZZ MM MM
- *     3F               prefixe des identifiants aleatoires
- *     ZZ ZZ ZZ ZZ ZZ   identifiant developpeur, VRAIS octets aleatoires
- *     MM MM            numero de methode chez ce developpeur
- *
- * Notre identifiant developpeur a ete tire de /dev/urandom : E2B7E19B8A.
- * Transpose est la methode 0001.
- */
-#define Z7_ID_TRANSPOSE ((UInt64)0x3FE2B7E19B8AULL << 16 | 0x0001)
+// Allocated by Igor Pavlov in https://github.com/ip7z/7zip/pull/245.
+#define Z7_ID_TRANSPOSE 0x04F71301
 
 REGISTER_FILTER_E(Transpose,
     CDecoder(),

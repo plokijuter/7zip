@@ -9,73 +9,54 @@
 #include "Alloc.h"
 #include "Ppmd7.h"
 
-/* encode : data[n][R] -> data[R][n]  (n = size / R) */
-/* un seul bloc de blk octets (blk multiple de R) */
-static void Enc1(unsigned R, Byte *data, SizeT blk, Byte *tmp)
+/* The wire format stores log2(records per block), not a byte-size exponent.
+   Decoding only needs shifts and multiplication; there is no division. */
+unsigned Transpose_StepExp(unsigned R, unsigned exp)
 {
-  const SizeT n = blk / R;
-  SizeT i, c;
-  for (c = 0; c < R; c++)
-  {
-    const Byte *src = data + c;
-    Byte *dst = tmp + c * n;
-    for (i = 0; i < n; i++)
-      dst[i] = src[i * R];
-  }
-  memcpy(data, tmp, blk);
+  unsigned step = 0;
+  while (((SizeT)R << (step + 1)) <= ((SizeT)1 << exp))
+    step++;
+  return step;
 }
 
 unsigned Transpose_PickExp(UInt64 size)
 {
-  /* On veut que la queue non traitee (au pire un bloc entier) reste petite
-     devant le fichier : on vise un bloc d'au plus 1/32 du flux. */
   unsigned e = TRANSPOSE_EXP_MIN;
   while (e < TRANSPOSE_EXP_MAX && ((UInt64)1 << (e + 1)) * 32 <= size)
     e++;
   return e;
 }
 
-SizeT Transpose_Encode(unsigned R, unsigned exp, Byte *data, SizeT size, Byte *tmp)
+SizeT Transpose_Convert(unsigned R, unsigned stepExp, Byte *data,
+    SizeT size, Byte *tmp, int encode)
 {
-  const SizeT blk = (((SizeT)1 << exp) / R) * R;   /* multiple de R, fixe */
+  const SizeT n = (SizeT)1 << stepExp;
+  const SizeT blk = (SizeT)R << stepExp;
   SizeT done = 0;
-  if (R < TRANSPOSE_MIN_R || blk == 0)
-    return 0;
   while (size - done >= blk)
   {
-    Enc1(R, data + done, blk, tmp);
-    done += blk;
-  }
-  return done;   /* le reste est laisse a l'appelant */
-}
-
-/* decode : data[R][n] -> data[n][R] */
-static void Dec1(unsigned R, Byte *data, SizeT blk, Byte *tmp)
-{
-  const SizeT n = blk / R;
-  SizeT i, c;
-  for (c = 0; c < R; c++)
-  {
-    const Byte *src = data + c * n;
-    Byte *dst = tmp + c;
-    for (i = 0; i < n; i++)
-      dst[i * R] = src[i];
-  }
-  memcpy(data, tmp, blk);
-}
-
-SizeT Transpose_Decode(unsigned R, unsigned exp, Byte *data, SizeT size, Byte *tmp)
-{
-  const SizeT blk = (((SizeT)1 << exp) / R) * R;
-  SizeT done = 0;
-  if (R < TRANSPOSE_MIN_R || blk == 0)
-    return 0;
-  while (size - done >= blk)
-  {
-    Dec1(R, data + done, blk, tmp);
+    SizeT c, i;
+    if (encode)
+    {
+      for (c = 0; c < R; c++)
+        for (i = 0; i < n; i++)
+          tmp[c * n + i] = data[done + i * R + c];
+    }
+    else
+    {
+      for (c = 0; c < R; c++)
+        for (i = 0; i < n; i++)
+          tmp[i * R + c] = data[done + c * n + i];
+    }
+    memcpy(data + done, tmp, blk);
     done += blk;
   }
   return done;
+}
+
+SizeT Transpose_Encode(unsigned R, unsigned exp, Byte *data, SizeT size, Byte *tmp)
+{
+  return Transpose_Convert(R, Transpose_StepExp(R, exp), data, size, tmp, 1);
 }
 
 /* --- Detection de la periode ------------------------------------------------

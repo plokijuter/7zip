@@ -49,6 +49,7 @@ static const UInt32 kLangIDs[] =
   IDT_COMPRESS_FORMAT,
   IDT_COMPRESS_LEVEL,
   IDT_COMPRESS_METHOD,
+  IDT_COMPRESS_PREPROCESS,
   IDT_COMPRESS_DICTIONARY,
   IDT_COMPRESS_ORDER,
   IDT_COMPRESS_SOLID,
@@ -126,7 +127,6 @@ enum EMethodID
   kCopy,
   kLZMA,
   kLZMA2,
-  kAnyz2,   // filtre Transpose (methode 0C) + LZMA2 : voir UpdateGUI.cpp
   kPPMd,
   kBZip2,
   kDeflate,
@@ -146,7 +146,6 @@ static LPCSTR const kMethodsNames[] =
     "Copy"
   , "LZMA"
   , "LZMA2"
-  , "anyz2"
   , "PPMd"
   , "BZip2"
   , "Deflate"
@@ -164,7 +163,6 @@ static LPCSTR const kMethodsNames[] =
 static const EMethodID g_7zMethods[] =
 {
   kLZMA2,
-  kAnyz2,
   kLZMA,
   kPPMd,
   kBZip2
@@ -472,6 +470,10 @@ bool CCompressDialog::OnInit()
   m_Format.Attach(GetItem(IDC_COMPRESS_FORMAT)); // that combo has CBS_SORT style in resources
   m_Level.Attach(GetItem(IDC_COMPRESS_LEVEL));
   m_Method.Attach(GetItem(IDC_COMPRESS_METHOD));
+  m_Preprocess.Attach(GetItem(IDC_COMPRESS_PREPROCESS));
+  m_Preprocess.AddString(L"None");
+  m_Preprocess.AddString(L"anyz2 (Transpose)");
+  m_Preprocess.SetCurSel(0);
   m_Dictionary.Attach(GetItem(IDC_COMPRESS_DICTIONARY));
 
   /*
@@ -1171,6 +1173,7 @@ void CCompressDialog::OnOK()
   }
 
   Info.Method = GetMethodSpec();
+  Info.Transpose = UseTranspose();
   Info.EncryptionMethod = GetEncryptionMethodSpec();
   Info.FormatIndex = (int)GetFormatIndex();
   Info.SFXMode = IsSFX();
@@ -1373,6 +1376,7 @@ bool CCompressDialog::OnCommand(unsigned code, unsigned itemID, LPARAM lParam)
       case IDC_COMPRESS_METHOD:
       {
         MethodChanged();
+        SetPreprocess();
         SetSolidBlockSize();
         SetNumThreads();
         CheckSFXNameChange();
@@ -1627,6 +1631,35 @@ static void Modify_Auto(AString &s)
   s.Insert(0, k_Auto_Prefix);
 }
 
+bool CCompressDialog::UseTranspose()
+{
+  return Get_ArcInfoEx().Is_7z() && !IsSFX() && GetLevel() != 0
+      && (GetMethodID() == kLZMA || GetMethodID() == kLZMA2 || GetMethodID() == kPPMd)
+      && m_Preprocess.GetCurSel() == 1;
+}
+
+void CCompressDialog::SetPreprocess()
+{
+  const CArcInfoEx &ai = Get_ArcInfoEx();
+  if (_preprocessFormat != ai.Name)
+  {
+    _preprocessFormat = ai.Name;
+    bool enabled = ai.Is_7z();
+    const int index = FindRegistryFormat(ai.Name);
+    if (index >= 0)
+    {
+      const NCompression::CFormatOptions &fo = m_RegistryInfo.Formats[index];
+      enabled = fo.Filter.IsEqualTo_Ascii_NoCase("Transpose")
+          || fo.Method.IsEqualTo_Ascii_NoCase("anyz2");
+    }
+    m_Preprocess.SetCurSel(enabled ? 1 : 0);
+  }
+  const bool allowed = ai.Is_7z() && !IsSFX() && GetLevel() != 0
+      && (GetMethodID() == kLZMA || GetMethodID() == kLZMA2 || GetMethodID() == kPPMd);
+  EnableItem(IDC_COMPRESS_PREPROCESS, allowed);
+  EnableItem(IDT_COMPRESS_PREPROCESS, allowed);
+}
+
 void CCompressDialog::SetMethod2(int keepMethodId)
 {
   m_Method.ResetContent();
@@ -1649,6 +1682,7 @@ void CCompressDialog::SetMethod2(int keepMethodId)
     {
       const NCompression::CFormatOptions &fo = m_RegistryInfo.Formats[index];
       defaultMethod = fo.Method;
+      if (defaultMethod.IsEqualTo_Ascii_NoCase("anyz2")) defaultMethod = "LZMA2";
     }
   }
   const bool isSfx = IsSFX();
@@ -1703,14 +1737,7 @@ void CCompressDialog::SetMethod2(int keepMethodId)
     }
     if ((defaultMethod.IsEqualTo_Ascii_NoCase(method) || m == 0) && !weUseSameMethod)
       m_Method.SetCurSel(itemIndex);
-    // anyz2 (filtre Transpose + LZMA2) est le choix propose par defaut pour 7z
-    // tant que l'utilisateur n'a pas enregistre une autre methode : il ne peut
-    // pas faire pire que LZMA2 seul, R=1 restant en lice dans la passe de
-    // mesure. anyz2 ne peut pas occuper la 1re place de la liste : celle-ci est
-    // l'entree "*" automatique, dont la donnee vaut -1 et qui n'emet aucune
-    // propriete de methode.
-    if (is7z && defaultMethod.IsEmpty() && methodID == kAnyz2 && !weUseSameMethod)
-      m_Method.SetCurSel(itemIndex);
+
   }
   
   if (!weUseSameMethod)
@@ -1947,7 +1974,6 @@ void CCompressDialog::SetDictionary2()
   {
     case kLZMA:
     case kLZMA2:
-    case kAnyz2:
     {
       {
         _auto_Dict = level <= 4 ?
@@ -2250,7 +2276,6 @@ void CCompressDialog::SetOrder2()
   {
     case kLZMA:
     case kLZMA2:
-    case kAnyz2:
     {
       _auto_Order = (level < 7 ? 32 : 64);
       int curSel = AddOrder_Auto();
@@ -2467,7 +2492,7 @@ void CCompressDialog::SetSolidBlockSize2()
     // we use same default block sizes as defined in 7z encoder
     UInt64 kMaxSize = (UInt64)1 << 32;
     const int methodId = GetMethodID();
-    if (methodId == kLZMA2 || methodId == kAnyz2)
+    if (methodId == kLZMA2)
     {
       blockSize = cs << 6;
       kMaxSize = (UInt64)1 << 34;
@@ -2629,7 +2654,7 @@ void CCompressDialog::SetNumThreads2()
   {
     case kLZMA: numAlgoThreadsMax = 2; break;
     case kLZMA2:
-    case kAnyz2: numAlgoThreadsMax = 256 * 2; break; // MTCODER_THREADS_MAX * 2
+      numAlgoThreadsMax = 256 * 2; break; // MTCODER_THREADS_MAX * 2
     case kBZip2: numAlgoThreadsMax = 64; break;
     // case kZSTD: numAlgoThreadsMax = num_ZSTD_threads_MAX; break;
     case kCopy:
@@ -2661,7 +2686,7 @@ void CCompressDialog::SetNumThreads2()
           break;
       }
     }
-    else if (methodID == kLZMA2 || methodID == kAnyz2)
+    else if (methodID == kLZMA2)
     {
       const UInt64 dict64 = GetDict2();
       const UInt32 numThreads1 = (GetLevel2() >= 5 ? 2 : 1);
@@ -2955,7 +2980,6 @@ UInt64 CCompressDialog::GetMemoryUsage_Threads_Dict_DecompMem(UInt32 numThreads,
   {
     case kLZMA:
     case kLZMA2:
-    case kAnyz2:
     {
       const UInt32 dict = (dict64 >= kLzmaMaxDictSize ? kLzmaMaxDictSize : (UInt32)dict64);
       UInt32 hs = dict - 1;
@@ -3325,6 +3349,7 @@ void CCompressDialog::SaveOptionsInMem()
 
   fo.Order = GetOrderSpec();
   fo.Method = GetMethodSpec();
+  fo.Filter = m_Preprocess.GetCurSel() == 1 ? L"Transpose" : L"";
   fo.EncryptionMethod = GetEncryptionMethodSpec();
   fo.NumThreads = GetNumThreadsSpec();
   fo.BlockLogSize = GetBlockSizeSpec();

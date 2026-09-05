@@ -421,13 +421,12 @@ static void Transpose_ResolveAuto(
     if (di.Size > bestSize) { bestSize = di.Size; bestIdx = i; }
   }
 
-  /* Sonde PPMd quelle que soit la chaine. On pourrait croire qu'il faut sonder
-     avec le codeur qui suit ; mesure faite, c'est faux ici : la sonde LZMA rate
-     des gains enormes que la sonde PPMd trouve, y compris pour une chaine LZMA2
-     (c_int32 : optimum 1512, sonde LZMA 16729, soit 11x rate). PPMd, modele de
-     contexte, classe mieux l'homogeneite des colonnes que ne le fait un
-     chercheur de repetitions. */
-  const unsigned probe = TRANSPOSE_PROBE_PPMD;
+  // Match the following coder's family. This remains a probe: dictionary,
+  // solid boundaries and a prefix-only decision can change the final result.
+  unsigned probe = TRANSPOSE_PROBE_LZMA;
+  for (unsigned j = 0; j < props.Size(); j++)
+    if (props[j].Value.IsPrefixedBy_Ascii_NoCase("PPMd"))
+      probe = TRANSPOSE_PROBE_PPMD;
 
   unsigned R = 1;
   if (bestSize >= 4 * TRANSPOSE_MAX_R)
